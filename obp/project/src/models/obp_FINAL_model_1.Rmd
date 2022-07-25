@@ -1,0 +1,165 @@
+---
+title: "Predict OBP Final Model (1)"
+date: "7/24/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(ranger)
+library(vip)
+```
+
+```{r}
+# load in cross-validation metrics
+obp_null_rmse <- readRDS('./project/volume/data/processed/obp_null_rmse.rds')
+obp_null_mae <- readRDS('./project/volume/data/processed/obp_null_mae.rds')
+
+obp_dt_rmse <- readRDS('./project/volume/data/processed/obp_dt_rmse_1.rds')
+obp_dt_mae <- readRDS('./project/volume/data/processed/obp_dt_mae_1.rds')
+
+obp_rf_rmse <- readRDS('./project/volume/data/processed/obp_rf_rmse_1.rds')
+obp_rf_mae <- readRDS('./project/volume/data/processed/obp_rf_mae_1.rds')
+
+obp_gbt_rmse <- readRDS('./project/volume/data/processed/obp_gbt_rmse_1.rds')
+obp_gbt_mae <- readRDS('./project/volume/data/processed/obp_gbt_mae_1.rds')
+
+obp_lr_rmse <- readRDS('./project/volume/data/processed/obp_lr_rmse_1.rds')
+obp_lr_mae <- readRDS('./project/volume/data/processed/obp_lr_mae_1.rds')
+
+obp_svm_rmse <- readRDS('./project/volume/data/processed/obp_svm_rmse_1.rds')
+obp_svm_mae <- readRDS('./project/volume/data/processed/obp_svm_mae_1.rds')
+
+obp_knn_rmse <- readRDS('./project/volume/data/processed/obp_knn_rmse_1.rds')
+obp_knn_mae <- readRDS('./project/volume/data/processed/obp_knn_mae_1.rds')
+```
+
+```{r}
+# create table of metrics
+obp_perf <- tribble(
+            ~Model,                       ~RMSE,          ~MAE,
+             "Null Model",                 obp_null_rmse, obp_null_mae,
+            "Decision Tree",               obp_dt_rmse,   obp_dt_mae,
+            "Random Forest",               obp_rf_rmse,   obp_rf_mae,
+            "Gradient Boosted Trees",      obp_gbt_rmse,  obp_gbt_mae,
+            "Penalized Linear Regression", obp_lr_rmse,   obp_lr_mae,
+            "Support Vector Machine",      obp_svm_rmse,  obp_svm_mae,
+            "K-Nearest Neighbors",         obp_knn_rmse,  obp_knn_mae)
+obp_perf
+```
+
+```{r}
+# select best model
+obp_perf %>% arrange(RMSE)
+```
+```{r}
+# load in train and test
+obp_train <- read.csv('./project/volume/data/interim/obp_train_1.csv',
+                      stringsAsFactors = TRUE)
+obp_train <- as_tibble(obp_train)
+
+obp_test <- read.csv('./project/volume/data/interim/obp_test_1.csv', 
+                     stringsAsFactors = TRUE)
+obp_test <- as_tibble(obp_test)
+```
+
+```{r}
+# create model specification
+obp_final_spec <- rand_forest(mtry = 11,
+                              trees = 223, 
+                              min_n = 2) %>%
+                  set_mode("regression") %>%
+                  set_engine("ranger", importance = "impurity")
+obp_final_spec
+```
+
+```{r}
+# create model recipe to preprocess data
+obp_final_rec <- recipe(FullSeason_OBP ~ ., data = obp_train) %>%
+                 update_role(playerid, Name, Team, new_role = "ID") %>%
+                 step_normalize(all_predictors())
+obp_final_rec
+```
+
+```{r}
+obp_final_wf <- workflow() %>%
+                add_model(obp_final_spec) %>%
+                add_recipe(obp_final_rec)
+```
+
+```{r}
+# fit model on all train data
+set.seed(2008)
+obp_final_fit <- obp_final_wf %>%
+                 fit(data = obp_train)
+```
+
+```{r}
+# generate predictions on test set
+predict(obp_final_fit, obp_test)
+```
+
+```{r}
+# view predictions
+obp_test_results <- augment(obp_final_fit, obp_test)
+obp_test_results
+```
+
+```{r}
+# calculate test error
+rmse(data = obp_test_results, truth = FullSeason_OBP, estimate = .pred)
+mae(data = obp_test_results, truth = FullSeason_OBP, estimate = .pred)
+```
+
+```{r}
+# extract final fitted workflow (recipe + model) for future use
+saveRDS(obp_final_fit, './project/volume/models/obp_final_fit_1.model')
+```
+
+```{r}
+# inspect variable importance
+obp_final_fit %>% extract_fit_parsnip() %>% vip(num_features = 20)
+```
+
+```{r}
+# determine null error for all players
+obp_tbl <- read.csv('./project/volume/data/interim/obp_tbl_1.csv',
+                      stringsAsFactors = TRUE)
+obp_tbl <- as_tibble(obp_tbl)
+
+obp_null_all <- obp_tbl %>%
+                summarise(null_guess = mean(FullSeason_OBP))
+obp_null_all
+```
+
+```{r}
+# determine null error for all players
+null_guess_all <- 0.325625
+
+# add null guess to entire dataset
+null_guess_all_col <- rep(null_guess_all, 320)
+cbind(obp_tbl, null_guess_all_col)
+
+rmse(data = obp_tbl, truth = FullSeason_OBP, estimate = null_guess_all_col)
+mae(data = obp_tbl, truth = FullSeason_OBP, estimate = null_guess_all_col)
+```
+
+
+```{r}
+# create predictions for all players using model
+predict(obp_final_fit, obp_tbl)
+
+obp_test_all_results <- augment(obp_final_fit, obp_tbl)
+obp_test_all_results
+
+# calculate test error
+rmse(data = obp_test_all_results, truth = FullSeason_OBP, estimate = .pred)
+mae(data = obp_test_all_results, truth = FullSeason_OBP, estimate = .pred)
+```
+
+

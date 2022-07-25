@@ -1,0 +1,185 @@
+---
+title: "Diabetes Random Forest Model"
+output: html_notebook
+---
+
+```{r}
+# front-matter
+rm(list = ls()) #clear the workspace
+
+library(tidymodels)  # for the tune package, along with the rest of tidymodels
+
+# Helper packages
+library(rpart.plot)  # for visualizing a decision tree
+library(vip)         # for variable importance plots
+library(ranger)
+```
+
+```{r}
+data(PimaIndiansDiabetes2, package = "mlbench")
+
+diabetes <- na.omit(PimaIndiansDiabetes2)
+
+diabetes <- as_tibble(diabetes)
+class(diabetes)
+
+diabetes
+```
+
+```{r}
+set.seed(123)
+diabetes_split <- initial_split(diabetes, strata = diabetes)
+diabetes_train <- training(diabetes_split)
+diabetes_test <- testing(diabetes_split)
+```
+
+```{r}
+# training set proportions by children
+diabetes_train %>% 
+  count(diabetes) %>% 
+  mutate(prop = n/sum(n))
+
+# test set proportions by children
+diabetes_test  %>% 
+  count(diabetes) %>% 
+  mutate(prop = n/sum(n))
+```
+
+```{r}
+tune_spec <- rand_forest(
+                trees = tune(),
+                min_n = tune()
+              ) %>%
+             set_engine("ranger", importance = "impurity") %>%
+             set_mode("classification")
+
+tune_spec
+```
+
+```{r}
+forest_grid <- grid_regular(
+                          trees(),
+                          min_n(),
+                          levels = 10)
+
+forest_grid
+```
+```{r}
+forest_grid %>%
+  count(trees)
+```
+
+```{r}
+set.seed(234)
+diabetes_folds <- vfold_cv(diabetes_train)
+diabetes_folds
+```
+
+```{r}
+set.seed(345)
+
+forest_wf <- workflow() %>%
+  add_model(tune_spec) %>%
+  add_formula(diabetes ~ .)
+
+forest_res <-
+  forest_wf %>%
+  tune_grid(
+      resamples = diabetes_folds,
+      grid = forest_grid,
+      control = control_grid(save_pred = TRUE),
+      metrics = metric_set(roc_auc)
+      )
+
+forest_res
+```
+
+```{r}
+forest_res %>%
+  collect_metrics
+```
+
+```{r}
+#tree_res %>%
+  #collect_metrics() %>%
+  #mutate(tree_depth = factor(tree_depth)) %>%
+  #ggplot(aes(cost_complexity, mean, color = tree_depth)) +
+  #geom_line(size = 1.5, alpha = 0.6) +
+  #geom_point(size = 2) +
+  #facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  #scale_x_log10(labels = scales::label_number()) +
+  #scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+```
+
+```{r}
+forest_res %>%
+  show_best("roc_auc")
+```
+
+```{r}
+best_forest <- forest_res %>%
+  select_best("roc_auc")
+
+best_forest
+```
+
+```{r}
+rf_auc <-
+  forest_res %>%
+  collect_predictions(parameters = best_forest) %>%
+  roc_curve(diabetes, .pred_neg) %>%
+  mutate(model = "Random Forest")
+
+autoplot(rf_auc)
+
+library(data.table)
+fwrite(rf_auc,'/Users/malcolmzerbe/practice_r/diabetes/project/volume/data/processed/rf_auc.csv')
+```
+
+```{r}
+rf_final_wf <-
+  forest_wf %>%
+  finalize_workflow(best_forest)
+
+rf_final_wf
+```
+
+```{r}
+rf_final_fit <-
+  rf_final_wf %>%
+  last_fit(diabetes_split)
+
+rf_final_fit %>%
+  collect_metrics
+
+rf_final_fit %>% collect_predictions()
+```
+
+```{r}
+rf_final_fit %>%
+  collect_predictions() %>%
+  roc_curve(diabetes, .pred_neg) %>%
+  autoplot()
+```
+
+```{r}
+final_forest <- extract_workflow(rf_final_fit)
+final_forest
+```
+
+```{r}
+#final_forest %>%
+  #extract_fit_engine() %>%
+  #rpart.plot(roundint = FALSE)
+```
+
+```{r}
+final_forest %>%
+  extract_fit_parsnip() %>%
+  vip()
+```
+
+```{r}
+args(rand_forest)
+```
+

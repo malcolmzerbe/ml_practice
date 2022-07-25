@@ -1,0 +1,121 @@
+---
+title: "Predict OBP K-Nearest Neighbors Model (1)"
+date: "7/23/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(kknn)
+library(doParallel)
+```
+
+```{r}
+# load in train and test
+obp_train <- read.csv('./project/volume/data/interim/obp_train_1.csv',
+                      stringsAsFactors = TRUE)
+obp_train <- as_tibble(obp_train)
+
+obp_test <- read.csv('./project/volume/data/interim/obp_test_1.csv', 
+                     stringsAsFactors = TRUE)
+obp_test <- as_tibble(obp_test)
+```
+
+```{r}
+# create model specification
+obp_knn_spec <- nearest_neighbor(neighbors = tune(),
+                                 weight_func = tune(),
+                                 dist_power = tune()) %>%
+                set_mode("regression") %>%
+                set_engine("kknn")
+obp_knn_spec
+
+#args(nearest_neighbor)
+```
+
+```{r}
+# create model recipe to preprocess data
+obp_knn_rec <- recipe(FullSeason_OBP ~ ., data = obp_train) %>%
+              update_role(playerid, Name, Team, new_role = "ID") %>%
+              step_normalize(all_predictors())
+obp_knn_rec
+```
+
+```{r}
+# create regular grid of values for tuning
+obp_knn_grid <- grid_regular(neighbors(),
+                             weight_func(),
+                             dist_power(),
+                             levels = 10)
+obp_knn_grid
+```
+
+```{r}
+# view values in grid
+obp_knn_grid %>% count(weight_func) # change hyperparameter to view its tested values
+```
+
+```{r}
+set.seed(2008)
+
+# create cross-validation folds
+obp_folds <- vfold_cv(obp_train, v = 10)
+glimpse(obp_folds)
+```
+
+```{r}
+# create workflow and tune along grid
+all_cores <- parallel::detectCores()
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+set.seed(2008)
+
+obp_knn_wf <- workflow() %>%
+             add_model(obp_knn_spec) %>%
+             add_recipe(obp_knn_rec)
+
+obp_knn_res <- obp_knn_wf %>%
+               tune_grid(resamples = obp_folds,
+                         grid = obp_knn_grid,
+                         control = control_grid(save_pred = TRUE,
+                                                save_workflow = TRUE),
+                         metrics = metric_set(rmse, mae))
+
+stopCluster(cl)
+```
+
+```{r}
+# collect cv results
+saveRDS(obp_knn_res, './project/volume/models/obp_knn_res_1.rds')
+
+#obp_gbt_res %>% collect_predictions()
+obp_knn_res %>% collect_metrics()
+obp_knn_res %>% show_best("rmse")
+```
+
+```{r}
+# select best hyperparameters
+obp_best_knn <- obp_knn_res %>%
+               select_best("rmse")
+obp_best_knn
+```
+
+```{r}
+obp_knn_metric <- obp_knn_res %>% collect_metrics()
+obp_knn_metric[obp_knn_metric$.config == 'Preprocessor1_Model0740',]
+```
+
+```{r}
+# record results for final model selection
+obp_knn_rmse <- 0.03021070
+saveRDS(obp_knn_rmse, './project/volume/data/processed/obp_knn_rmse_1.rds')
+obp_knn_mae <- 0.02395995
+saveRDS(obp_knn_mae, './project/volume/data/processed/obp_knn_mae_1.rds')
+```
+

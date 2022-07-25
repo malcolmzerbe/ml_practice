@@ -1,0 +1,51 @@
+---
+title: "Predict OBP Null Model"
+date: "7/23/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+```
+
+```{r}
+# load in train and test
+obp_train <- read.csv('./project/volume/data/interim/obp_train.csv', stringsAsFactors = TRUE)
+obp_train <- as_tibble(obp_train)
+
+obp_test <- read.csv('./project/volume/data/interim/obp_test.csv', stringsAsFactors = TRUE)
+obp_test <- as_tibble(obp_test)
+```
+
+```{r}
+obp_null <- obp_train %>%
+            summarise(null_guess = mean(FullSeason_OBP))
+obp_null
+
+null_guess <- 0.3245
+```
+
+```{r}
+# add null guess to test set
+null_guess_col <- rep(null_guess, 64)
+cbind(obp_train, null_guess_col)
+```
+
+```{r}
+rmse(data = obp_test, truth = FullSeason_OBP, estimate = null_guess_col)
+mae(data = obp_test, truth = FullSeason_OBP, estimate = null_guess_col)
+``` 
+
+```{r}
+# record results for final model selection
+obp_null_rmse <- 0.03495443
+saveRDS(obp_null_rmse, './project/volume/data/processed/obp_null_rmse.rds')
+obp_null_mae <- 0.0271875
+saveRDS(obp_null_mae, './project/volume/data/processed/obp_null_mae.rds')
+```
+

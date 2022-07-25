@@ -1,0 +1,40 @@
+---
+title: "NBA Feature Script"
+output: html_notebook
+---
+
+```{r}
+# front-matter
+rm(list = ls()) #clear the workspace
+
+library(tidyverse)
+library(data.table)
+```
+
+```{r}
+nba <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/raw/nba_logreg.csv')
+```
+
+```{r}
+nba <- na.omit(nba)
+
+#nba <- nba %>%
+  #mutate(TARGET_5Yrs = if_else(TARGET_5Yrs == 1, "Yes", "No")) %>%
+  #mutate(TARGET_5Yrs = as.factor(TARGET_5Yrs))
+
+nba <- as_tibble(nba)
+class(nba)
+
+id <- nba %>%
+  select(Name)
+
+nba <- nba %>%
+  select(-Name)
+
+nba
+```
+
+```{r}
+fwrite(nba,'/Users/malcolmzerbe/practice_r/nba/project/volume/data/interim/nba.csv')
+```
+

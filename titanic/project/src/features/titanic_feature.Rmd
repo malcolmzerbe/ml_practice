@@ -1,0 +1,28 @@
+---
+title: "Titanic Feature Script"
+output: html_notebook
+---
+
+```{r}
+# front-matter
+rm(list = ls()) #clear the workspace
+
+library(data.table)
+```
+
+```{r}
+titanic_train <- fread('/Users/malcolmzerbe/practice_r/titanic/project/volume/data/raw/train.csv')
+titanic_test <- fread('/Users/malcolmzerbe/practice_r/titanic/project/volume/data/raw/test.csv')
+```
+
+```{r}
+#titanic_train <- titanic_train %>%
+ # mutate(response = if_else(Survived == 1, "yes", "no")) %>%
+  #select(-Survived)
+```
+
+```{r}
+fwrite(titanic_train,'/Users/malcolmzerbe/practice_r/titanic/project/volume/data/interim/titanic_train.csv')
+fwrite(titanic_test,'/Users/malcolmzerbe/practice_r/titanic/project/volume/data/interim/titanic_test.csv')
+```
+

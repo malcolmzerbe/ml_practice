@@ -1,0 +1,121 @@
+---
+title: "Predict OBP Decision Tree Model (1)"
+date: "7/22/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(rpart)
+library(doParallel)
+```
+
+```{r}
+# load in train and test
+obp_train <- read.csv('./project/volume/data/interim/obp_train_1.csv',
+                      stringsAsFactors = TRUE)
+obp_train <- as_tibble(obp_train)
+
+obp_test <- read.csv('./project/volume/data/interim/obp_test_1.csv',
+                     stringsAsFactors = TRUE)
+obp_test <- as_tibble(obp_test)
+```
+
+```{r}
+# create model specification
+obp_dt_spec <- decision_tree(cost_complexity = tune(),
+                             tree_depth = tune(),
+                             min_n = tune()) %>%
+               set_mode("regression") %>%
+               set_engine("rpart")
+obp_dt_spec
+
+#args(decision_tree)
+```
+
+```{r}
+# create model recipe to preprocess data
+obp_dt_rec <- recipe(FullSeason_OBP ~ ., data = obp_train) %>%
+              update_role(playerid, Name, Team, new_role = "ID") %>%
+              step_normalize(all_predictors())
+obp_dt_rec
+```
+
+```{r}
+# create regular grid of values for tuning
+obp_dt_grid <- grid_regular(cost_complexity(),
+                            tree_depth(),
+                            min_n(),
+                            levels = 5)
+obp_dt_grid
+```
+
+```{r}
+# view values in grid
+obp_dt_grid %>% count(min_n) # change hyperparameter to view its tested values
+```
+
+```{r}
+set.seed(2008)
+
+# create cross-validation folds
+obp_folds <- vfold_cv(obp_train, v = 10)
+glimpse(obp_folds)
+```
+
+```{r}
+# create workflow and tune along grid
+all_cores <- parallel::detectCores()
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+set.seed(2008)
+
+obp_dt_wf <- workflow() %>%
+             add_model(obp_dt_spec) %>%
+             add_recipe(obp_dt_rec)
+
+obp_dt_res <- obp_dt_wf %>%
+              tune_grid(resamples = obp_folds,
+                        grid = obp_dt_grid,
+                        control = control_grid(save_pred = TRUE,
+                                               save_workflow = TRUE),
+                        metrics = metric_set(rmse, mae))
+
+stopCluster(cl)
+```
+
+```{r}
+# collect cv results
+saveRDS(obp_dt_res, './project/volume/models/obp_dt_res_1.rds')
+
+#obp_dt_res %>% collect_predictions()
+obp_dt_res %>% collect_metrics()
+obp_dt_res %>% show_best("rmse")
+```
+
+```{r}
+# select best hyperparameters
+obp_best_dt <- obp_dt_res %>%
+               select_best("rmse")
+obp_best_dt
+```
+
+```{r}
+obp_dt_metric <- obp_dt_res %>% collect_metrics()
+obp_dt_metric[obp_dt_metric$.config == 'Preprocessor1_Model031',]
+```
+
+```{r}
+# record results for final model selection
+obp_dt_rmse <- 0.03067357
+saveRDS(obp_dt_rmse, './project/volume/data/processed/obp_dt_rmse_1.rds')
+obp_dt_mae <- 0.02365624
+saveRDS(obp_dt_mae, './project/volume/data/processed/obp_dt_mae_1.rds')
+```
+

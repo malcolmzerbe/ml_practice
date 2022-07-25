@@ -1,0 +1,93 @@
+---
+title: "Customer Churn Ensemble Model"
+output: html_notebook
+---
+
+```{r, include = F, echo = F, warning = F}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(stacks)
+```
+
+```{r}
+# load in train and test
+churn_train_path <- './project/volume/data/interim/churn_train.csv'
+churn_test_path <- './project/volume/data/interim/churn_test.csv'
+  
+churn_train <- read.csv(churn_train_path, stringsAsFactors = TRUE)
+churn_test <- read.csv(churn_test_path, stringsAsFactors = TRUE)
+
+# load in validation results
+churn_lr_res <- readRDS('./project/volume/data/processed/churn_lr_res.rds')
+churn_nb_res <- readRDS('./project/volume/data/processed/churn_nb_res.rds')
+churn_dt_res <- readRDS('./project/volume/data/processed/churn_dt_res.rds')
+churn_rf_res <- readRDS('./project/volume/data/processed/churn_rf_res.rds')
+churn_gbt_res <- readRDS('./project/volume/data/processed/churn_gbt_res.rds')
+```
+
+```{r}
+churn_data_st <- stacks() %>%
+                 add_candidates(churn_lr_res) %>%
+                 add_candidates(churn_nb_res) %>%
+                 add_candidates(churn_dt_res) %>%
+                 add_candidates(churn_rf_res) %>%
+                 add_candidates(churn_gbt_res)
+churn_data_st
+```
+
+```{r}
+as_tibble(churn_data_st)
+```
+
+```{r}
+churn_model_st <- churn_data_st %>%
+                  blend_predictions()
+churn_model_st
+```
+
+```{r}
+theme_set(theme_bw())
+autoplot(churn_model_st)
+```
+
+```{r}
+autoplot(churn_model_st, type = "members")
+```
+
+```{r}
+autoplot(churn_model_st, type = "weights")
+```
+
+```{r}
+churn_model_st <- churn_model_st %>%
+                  fit_members()
+churn_model_st
+```
+
+```{r}
+collect_parameters(churn_model_st, "churn_lr_res")
+```
+
+```{r}
+churn_test_pred <- churn_test %>%
+                   bind_cols(predict(churn_model_st, ., type = "prob"))
+churn_test_pred
+```
+
+```{r}
+roc_auc(data = churn_test_pred,
+        truth = Churn,
+        estimator = "binary",
+        event_level = "second",
+        estimate = .pred_Yes)
+```
+
+```{r}
+# extract fitted model for future use
+saveRDS(churn_model_st, './project/volume/models/churn_model_st.st')
+```
+

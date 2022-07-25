@@ -1,0 +1,240 @@
+---
+title: "Titanic Gradient Boosted Trees Model"
+output: html_notebook
+---
+
+```{r, include = F, echo=F}
+# Clear the workspace
+rm(list = ls())
+
+# Load packages
+library(tidyverse)
+library(tidymodels)
+library(xgboost)
+library(vip)
+```
+
+```{r}
+# Load in data
+titanic_train_path <- './project/volume/data/raw/train.csv'
+titanic_test_path <- './project/volume/data/raw/test.csv'
+titanic_ex_sub_path <- './project/volume/data/raw/gender_submission.csv'
+
+titanic_train_df <- read.csv(titanic_train_path)
+titanic_test_df <- read.csv(titanic_test_path)
+titanic_ex_sub_df <- read.csv(titanic_ex_sub_path)
+
+# Convert to tibble
+titanic_train_tbl<- as_tibble(titanic_train_df)
+titanic_test_tbl <- as_tibble(titanic_test_df)
+titanic_ex_sub_tbl <- as_tibble(titanic_ex_sub_df)
+```
+
+```{r}
+# View train data
+head(titanic_train_tbl)
+str(titanic_train_tbl)
+dim(titanic_train_tbl)
+```
+
+```{r}
+# View test data
+head(titanic_test_tbl)
+str(titanic_test_tbl)
+dim(titanic_test_tbl)
+```
+
+```{r}
+# View example submission
+head(titanic_ex_sub_tbl)
+str(titanic_ex_sub_tbl)
+dim(titanic_ex_sub_tbl)
+```
+```{r}
+# Convert features to factors
+titanic_train_tbl <- titanic_train_tbl %>%
+                     mutate(across(where(is.character), as.factor))
+titanic_train_tbl$Survived <- as.factor(titanic_train_tbl$Survived)
+titanic_test_tbl <- titanic_test_tbl %>%
+                    mutate(across(where(is.character), as.factor))
+```
+
+```{r}
+# Check structure of features
+str(titanic_train_tbl)
+```
+
+```{r}
+# Check structure of features
+str(titanic_test_tbl)
+```
+
+```{r}
+# Create model specification
+titanic_gbt_spec <- boost_tree(
+                               mtry = tune(),
+                               trees = tune(),
+                               min_n = tune(), 
+                               tree_depth = tune(),
+                               #learn_rate = tune(),
+                               #loss_reduction = tune(),
+                               #sample_size = tune(),
+                               #stop_iter =  25, 
+                              ) %>%
+                    set_mode("classification") %>%
+                    set_engine("xgboost")
+titanic_gbt_spec
+```
+
+```{r}
+args(boost_tree)
+```
+
+```{r}
+# Create model recipe to preprocess data
+titanic_gbt_rec <- recipe(Survived ~ ., data = titanic_train_tbl) %>%
+                   update_role(PassengerId, Name, Ticket, new_role = "ID") %>%
+                   step_novel(all_nominal_predictors()) %>%
+                   step_dummy(all_nominal_predictors()) %>%
+                   step_zv(all_predictors()) %>%
+                   step_normalize(all_predictors())
+titanic_gbt_rec
+```
+```{r}
+# Create a regular grid of values for tuning
+titanic_gbt_grid <- grid_regular(
+                                 mtry(range = c(10, 40)),
+                                 trees(range = c(1000, 2000)),
+                                 min_n(),
+                                 tree_depth(range = c(8, 24)),
+                                 #learn_rate(),
+                                 #loss_reduction(),
+                                 #sample_size(),
+                                 levels = 5
+                                )
+head(titanic_gbt_grid, 5)
+dim(titanic_gbt_grid)
+```
+
+```{r}
+# View values in grid
+titanic_gbt_grid %>% count(mtry)
+```
+
+```{r}
+# Create cross-validation folds
+set.seed(40)
+
+titanic_folds <- vfold_cv(titanic_train_tbl, v = 3, strata = Survived)
+glimpse(titanic_folds)
+```
+
+```{r}
+# Tune along the grid
+set.seed(40)
+
+titanic_gbt_wf <- workflow() %>%
+                  add_recipe(
+                             titanic_gbt_rec,
+                             blueprint = hardhat::default_recipe_blueprint(allow_novel_levels = TRUE)
+                             ) %>%
+                  add_model(titanic_gbt_spec)
+
+titanic_gbt_res <- titanic_gbt_wf %>%
+                   tune_grid(
+                             resamples = titanic_folds,
+                             grid = titanic_gbt_grid,
+                             control = control_grid(save_pred = TRUE),
+                             metrics = metric_set(roc_auc)
+                            )
+```
+
+```{r}
+# Check cross-validation notes if needed
+collect_notes(titanic_gbt_res)
+```
+
+```{r}
+# Collect cross-validation results
+titanic_gbt_res %>% collect_metrics
+titanic_gbt_res %>% show_best("roc_auc")
+```
+
+```{r}
+# Select best model hyperparameters
+titanic_best_gbt <- titanic_gbt_res %>%
+                    select_best("roc_auc")
+titanic_best_gbt
+```
+
+```{r}
+# Visualize model cross-validation performance
+titanic_gbt_cv_auc <- titanic_gbt_res %>%
+                      collect_predictions(parameters = titanic_best_gbt) %>%
+                      roc_curve(Survived, .pred_0) %>%
+                      mutate(model = "Gradient Boosted Trees")
+autoplot(titanic_gbt_cv_auc)
+
+write_csv(titanic_gbt_cv_auc, './project/volume/data/processed/titanic_gbt_cv_auc.csv')
+```
+
+```{r}
+# Finalize model
+titanic_gbt_final_wf <- titanic_gbt_wf %>%
+                        finalize_workflow(titanic_best_gbt)
+titanic_gbt_final_wf
+```
+
+```{r}
+# Fit model on all train data
+titanic_gbt_final_fit <- titanic_gbt_final_wf %>%
+                         fit(data = titanic_train_tbl)
+titanic_gbt_final_fit
+```
+
+```{r}
+# Generate predictions on test set
+ 
+# Predicted class
+predict(titanic_gbt_final_fit, titanic_test_tbl)
+
+# Predicted class probabilities
+titanic_gbt_test_results <- augment(titanic_gbt_final_fit, titanic_test_tbl)
+titanic_gbt_test_results %>% select(PassengerId, .pred_class, .pred_1)
+```
+
+```{r}
+# Create Kaggle submission
+head(titanic_ex_sub_tbl)
+dim(titanic_ex_sub_tbl)
+
+titanic_gbt_submission <- titanic_gbt_test_results %>%
+                          select(PassengerId, .pred_class) %>%
+                          rename(Survived = .pred_class)
+
+head(titanic_gbt_submission)
+dim(titanic_gbt_submission)
+
+write_csv(titanic_gbt_submission, './project/volume/data/processed/titanic_gbt_submission.csv')
+```
+
+```{r}
+# Best Kaggle score
+0.77033
+```
+
+```{r}
+# Extract final model object for future use
+titanic_final_gbt <- titanic_gbt_final_fit %>%
+                     extract_fit_parsnip
+  
+titanic_final_gbt
+
+saveRDS(titanic_final_gbt, './project/volume/models/titanic_final_gbt.rds')
+```
+
+```{r}
+# Inspect variable importance
+titanic_final_gbt %>% vip()
+```
+

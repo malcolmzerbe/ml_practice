@@ -1,0 +1,119 @@
+---
+title: "Predict OBP Penalized Linear Regression Model (1)"
+date: "7/23/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(doParallel)
+```
+
+```{r}
+# load in train and test
+obp_train <- read.csv('./project/volume/data/interim/obp_train_1.csv',
+                      stringsAsFactors = TRUE)
+obp_train <- as_tibble(obp_train)
+
+obp_test <- read.csv('./project/volume/data/interim/obp_test_1.csv', 
+                     stringsAsFactors = TRUE)
+obp_test <- as_tibble(obp_test)
+```
+
+```{r}
+# create model specification
+obp_lr_spec <- linear_reg(penalty = tune(),
+                          mixture = tune()) %>%
+                set_mode("regression") %>%
+                set_engine("glmnet")
+obp_lr_spec
+
+#args(linear_reg)
+```
+
+```{r}
+# create model recipe to preprocess data
+obp_lr_rec <- recipe(FullSeason_OBP ~ ., data = obp_train) %>%
+              update_role(playerid, Name, Team, new_role = "ID") %>%
+              step_normalize(all_predictors())
+obp_lr_rec
+```
+
+```{r}
+# create regular grid of values for tuning
+obp_lr_grid <- grid_regular(penalty(),
+                            mixture(),
+                            levels = 20)
+obp_lr_grid
+```
+
+```{r}
+# view values in grid
+obp_lr_grid %>% count(mixture) # change hyperparameter to view its tested values
+```
+
+```{r}
+set.seed(2008)
+
+# create cross-validation folds
+obp_folds <- vfold_cv(obp_train, v = 10)
+glimpse(obp_folds)
+```
+
+```{r}
+# create workflow and tune along grid
+all_cores <- parallel::detectCores()
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+set.seed(2008)
+
+obp_lr_wf <- workflow() %>%
+             add_model(obp_lr_spec) %>%
+             add_recipe(obp_lr_rec)
+
+obp_lr_res <- obp_lr_wf %>%
+               tune_grid(resamples = obp_folds,
+                         grid = obp_lr_grid,
+                         control = control_grid(save_pred = TRUE,
+                                                save_workflow = TRUE),
+                         metrics = metric_set(rmse, mae))
+
+stopCluster(cl)
+```
+
+```{r}
+# collect cv results
+saveRDS(obp_lr_res, './project/volume/models/obp_lr_res_1.rds')
+
+#obp_gbt_res %>% collect_predictions()
+obp_lr_res %>% collect_metrics()
+obp_lr_res %>% show_best("rmse")
+```
+
+```{r}
+# select best hyperparameters
+obp_best_lr <- obp_lr_res %>%
+               select_best("rmse")
+obp_best_lr
+```
+
+```{r}
+obp_lr_metric <- obp_lr_res %>% collect_metrics()
+obp_lr_metric[obp_lr_metric$.config == 'Preprocessor1_Model215',]
+```
+
+```{r}
+# record results for final model selection
+obp_lr_rmse <- 0.02849681
+saveRDS(obp_lr_rmse, './project/volume/data/processed//obp_lr_rmse_1.rds')
+obp_lr_mae <- 0.02303054
+saveRDS(obp_lr_mae, './project/volume/data/processed/obp_lr_mae_1.rds')
+```
+

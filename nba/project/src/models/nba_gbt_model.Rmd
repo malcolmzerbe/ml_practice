@@ -1,0 +1,205 @@
+---
+title: "NBA Gradient Boosted Trees Model"
+output: html_notebook
+---
+
+```{r}
+# front-matter
+rm(list = ls()) #clear the workspace
+
+library(tidymodels)  # for the tune package, along with the rest of tidymodels
+
+# Helper packages
+library(rpart.plot)  # for visualizing a decision tree
+library(vip)         # for variable importance plots
+```
+
+```{r}
+nba <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/interim/nba.csv')
+
+nba <- as_tibble(nba)
+class(nba)
+
+nba <- nba %>%
+  mutate(TARGET_5Yrs = as.factor(TARGET_5Yrs))
+
+# Make Valid Column Names 
+colnames(nba) <- make.names(colnames(nba))
+
+nba
+```
+
+```{r}
+set.seed(123)
+nba_split <- initial_split(nba, strata = TARGET_5Yrs)
+nba_train <- training(nba_split)
+nba_test <- testing(nba_split)
+```
+
+```{r}
+# training set proportions by response
+nba_train %>% 
+  count(TARGET_5Yrs) %>% 
+  mutate(prop = n/sum(n))
+
+# test set proportions by response
+nba_test  %>% 
+  count(TARGET_5Yrs) %>% 
+  mutate(prop = n/sum(n))
+```
+
+```{r}
+tune_spec <- boost_tree(
+                mtry = tune(),
+                trees = 1000,
+                min_n = tune(),
+                tree_depth = tune(),
+                learn_rate = 0.1,
+                loss_reduction = tune()
+                #sample_size = tune()
+              ) %>%
+             set_engine("xgboost") %>%
+             set_mode("classification")
+
+tune_spec
+```
+
+```{r}
+boost_grid <- grid_regular(mtry(range = c(1, 10)),
+                          #trees(),
+                          min_n(range = c(80, 120)),
+                          tree_depth(range = c(4, 15)),
+                          #learn_rate(),
+                          loss_reduction(),
+                          #sample_size(range = c(, 1)),
+                          levels = 5)
+
+boost_grid
+```
+
+```{r}
+boost_grid %>%
+  count(mtry)
+
+#boost_grid %>%
+  #count(trees)
+
+boost_grid %>%
+  count(min_n)
+
+boost_grid %>%
+  count(tree_depth)
+
+#boost_grid %>%
+  #count(learn_rate)
+
+boost_grid %>%
+  count(loss_reduction)
+
+#boost_grid %>%
+  #count(sample_size)
+```
+
+```{r}
+set.seed(234)
+nba_folds <- vfold_cv(nba_train)
+nba_folds
+```
+
+```{r}
+set.seed(345)
+
+boost_wf <- workflow() %>%
+  add_model(tune_spec) %>%
+  add_formula(TARGET_5Yrs ~ .)
+
+boost_res <-
+  boost_wf %>%
+  tune_grid(
+      resamples = nba_folds,
+      grid = boost_grid,
+      control = control_grid(save_pred = TRUE),
+      metrics = metric_set(roc_auc)
+      )
+
+boost_res
+```
+
+```{r}
+boost_res %>%
+  collect_metrics
+```
+
+```{r}
+boost_res %>%
+  show_best("roc_auc")
+```
+
+```{r}
+best_boost <- boost_res %>%
+  select_best("roc_auc")
+
+best_boost
+```
+
+```{r}
+gbt_auc <-
+  boost_res %>%
+  collect_predictions(parameters = best_boost) %>%
+  roc_curve(TARGET_5Yrs, .pred_0) %>%
+  mutate(model = "Gradient Boosted Trees")
+
+autoplot(gbt_auc)
+
+library(data.table)
+fwrite(gbt_auc,'/Users/malcolmzerbe/practice_r/nba/project/volume/data/processed/gbt_auc.csv')
+```
+
+```{r}
+gbt_final_wf <-
+  boost_wf %>%
+  finalize_workflow(best_boost)
+
+gbt_final_wf
+```
+
+```{r}
+gbt_final_fit <-
+  gbt_final_wf %>%
+  last_fit(diabetes_split)
+
+gbt_final_fit %>%
+  collect_metrics
+
+gbt_final_fit %>% collect_predictions()
+```
+
+```{r}
+gbt_final_fit %>%
+  collect_predictions() %>%
+  roc_curve(diabetes, .pred_neg) %>%
+  autoplot()
+```
+
+```{r}
+final_boost <- extract_workflow(gbt_final_fit)
+final_boost
+```
+
+```{r}
+#final_boost %>%
+  #extract_fit_engine() %>%
+  #rpart.plot(roundint = FALSE)
+```
+
+```{r}
+final_boost %>%
+  extract_fit_parsnip() %>%
+  vip()
+```
+
+
+```{r}
+args(boost_tree)
+```
+

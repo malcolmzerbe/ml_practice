@@ -1,0 +1,30 @@
+---
+title: "Compare NBA Validation Performance"
+output: html_notebook
+---
+
+```{r}
+# front-matter
+rm(list = ls()) #clear the workspace
+
+library(tidyverse)
+library(data.table)
+```
+
+```{r}
+dt_auc <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/processed/dt_auc.csv')
+rf_auc <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/processed/rf_auc.csv')
+gbt_auc <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/processed/gbt_auc.csv')
+lr_auc <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/processed/lr_auc.csv')
+```
+
+```{r}
+bind_rows(dt_auc, rf_auc, gbt_auc, lr_auc) %>% 
+  ggplot(aes(x = 1 - specificity, y = sensitivity, col = model)) + 
+  geom_path(lwd = 1.5, alpha = 0.8) +
+  geom_abline(lty = 3) + 
+  coord_equal() + 
+  scale_color_viridis_d(option = "plasma", end = .6)
+```
+
+

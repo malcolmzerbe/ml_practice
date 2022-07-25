@@ -1,0 +1,129 @@
+---
+title: "Predict OBP Gradient Boosted Trees Model (2)"
+date: "7/23/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(xgboost)
+library(doParallel)
+```
+
+```{r}
+# load in train and test
+obp_train <- read.csv('./project/volume/data/interim/obp_train_2.csv', 
+                      stringsAsFactors = TRUE)
+obp_train <- as_tibble(obp_train)
+
+obp_test <- read.csv('./project/volume/data/interim/obp_test_2.csv', 
+                     stringsAsFactors = TRUE)
+obp_test <- as_tibble(obp_test)
+```
+
+```{r}
+# create model specification
+obp_gbt_spec <- boost_tree(mtry = tune(),
+                           trees = tune(),
+                           min_n = tune(),
+                           tree_depth = tune(),
+                           #learn_rate = tune(),
+                           #loss_reduction = tune(),
+                           sample_size = 0.95) %>%
+                set_mode("regression") %>%
+                set_engine("xgboost")
+obp_gbt_spec
+
+#args(boost_tree)
+```
+
+```{r}
+# create model recipe to preprocess data
+obp_gbt_rec <- recipe(FullSeason_OBP ~ ., data = obp_train) %>%
+               update_role(playerid, Name, MarApr_Team, Team_2018, new_role = "ID") %>%
+               step_normalize(all_predictors())
+obp_gbt_rec
+```
+
+```{r}
+# create regular grid of values for tuning
+obp_gbt_grid <- grid_regular(mtry(range = c(1, 60)),
+                             trees(),
+                             min_n(),
+                             tree_depth(),
+                             #learn_rate(),
+                             #loss_reduction(),
+                             #sample_prop(range = c(0.75, 1.0)),
+                             levels = 10)
+obp_gbt_grid
+```
+
+```{r}
+# view values in grid
+obp_gbt_grid %>% count(mtry) # change hyperparameter to view its tested values
+```
+
+```{r}
+set.seed(2008)
+
+# create cross-validation folds
+obp_folds <- vfold_cv(obp_train, v = 10)
+glimpse(obp_folds)
+```
+
+```{r}
+# create workflow and tune along grid
+all_cores <- parallel::detectCores()
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+set.seed(2008)
+
+obp_gbt_wf <- workflow() %>%
+             add_model(obp_gbt_spec) %>%
+             add_recipe(obp_gbt_rec)
+
+obp_gbt_res <- obp_gbt_wf %>%
+               tune_grid(resamples = obp_folds,
+                         grid = obp_gbt_grid,
+                         control = control_grid(save_pred = TRUE,
+                                                save_workflow = TRUE),
+                         metrics = metric_set(rmse, mae))
+
+stopCluster(cl)
+```
+
+```{r}
+# collect cv results
+saveRDS(obp_gbt_res, './project/volume/models/obp_gbt_res_2.rds')
+
+#obp_gbt_res %>% collect_predictions()
+obp_gbt_res %>% collect_metrics()
+obp_gbt_res %>% show_best("rmse")
+```
+
+```{r}
+# select best hyperparameters
+obp_best_gbt <- obp_gbt_res %>%
+               select_best("rmse")
+obp_best_gbt
+```
+
+```{r}
+obp_gbt_metric <- obp_gbt_res %>% collect_metrics()
+obp_gbt_metric[obp_gbt_metric$.config == 'Preprocessor1_Model05022',]
+```
+
+```{r}
+# record results for final model selection
+obp_gbt_rmse <- 0.02737531
+saveRDS(obp_gbt_rmse, './project/volume/data/processed/obp_gbt_rmse_2.rds')
+obp_gbt_mae <- 0.02236038
+saveRDS(obp_gbt_mae, './project/volume/data/processed/obp_gbt_mae_2.rds')
+```
+

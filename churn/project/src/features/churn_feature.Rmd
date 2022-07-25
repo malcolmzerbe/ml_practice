@@ -1,0 +1,83 @@
+---
+title: "Customer Churn Feature Script"
+output: html_notebook
+---
+
+```{r, include = F, echo = F, warning = F}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(rsample)
+```
+
+```{r}
+# load in data
+churn_path <- './project/volume/data/raw/customer_churn.csv'
+churn_tbl <- read.csv(churn_path)
+churn_tbl <- as_tibble(churn_tbl)
+```
+
+```{r}
+# inspect data
+head(churn_tbl)
+glimpse(churn_tbl)
+dim(churn_tbl)
+```
+
+```{r}
+# drop rows with missing values and convert features to factors
+is.na(churn_tbl) %>% colSums()
+churn_tbl <- churn_tbl %>%
+             mutate(across(where(is.character), as.factor)) %>%
+             drop_na()
+str(churn_tbl)
+```
+
+```{r}
+# view data
+churn_tbl
+```
+
+```{r}
+# check proportion of response variable
+churn_tbl %>% count(Churn) %>% mutate(prop = n/sum(n))
+```
+
+```{r}
+# split into train and test
+set.seed(40)
+churn_split <- initial_split(churn_tbl, strata = Churn, prop = 0.80)
+saveRDS(churn_split, './project/volume/data/interim/churn_split.rds')
+
+churn_train <- training(churn_split)
+dim(churn_train)
+churn_test <- testing(churn_split)
+dim(churn_test)
+```
+
+```{r}
+# inspect train data
+head(churn_train)
+str(churn_train)
+```
+
+```{r}
+# inspect test data
+head(churn_test)
+str(churn_test)
+```
+
+```{r}
+# check proportions of response in train and test
+churn_train %>% count(Churn) %>% mutate(prop = n/sum(n))
+churn_test %>% count(Churn) %>% mutate(prop = n/sum(n))
+```
+
+```{r}
+# save train and test to interim
+write_csv(churn_train, './project/volume/data/interim/churn_train.csv')
+write_csv(churn_test, './project/volume/data/interim/churn_test.csv')
+```
+

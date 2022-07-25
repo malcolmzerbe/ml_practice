@@ -1,0 +1,154 @@
+---
+title: "Customer Churn Naive Bayes Model"
+output: html_notebook
+---
+
+```{r, include = F, echo = F, warning = F}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(klaR)
+library(discrim)
+library(stacks)
+library(vip)
+library(doParallel)
+```
+
+```{r}
+# load in train and test
+churn_train_path <- './project/volume/data/interim/churn_train.csv'
+churn_test_path <- './project/volume/data/interim/churn_test.csv'
+  
+churn_train <- read.csv(churn_train_path, stringsAsFactors = TRUE)
+churn_test <- read.csv(churn_test_path, stringsAsFactors = TRUE)
+```
+
+```{r}
+# create model specification
+churn_nb_spec <- naive_Bayes(smoothness = tune(),
+                             Laplace = tune()) %>%
+                 set_mode("classification") %>%
+                 set_engine("klaR")
+churn_nb_spec
+
+#args(naive_Bayes)
+```
+
+```{r}
+# create model recipe to preprocess data
+churn_nb_rec <- recipe(Churn ~ ., data = churn_train) %>%
+                update_role(customerID, new_role = "ID") %>%
+                step_dummy(all_nominal_predictors()) %>%
+                step_zv(all_predictors()) %>%
+                step_normalize(all_predictors())
+churn_nb_rec
+```
+
+```{r}
+# create regular grid of values for tuning
+churn_nb_grid <- grid_regular(smoothness(),
+                              Laplace(),
+                              levels = 5)
+churn_nb_grid
+dim(churn_nb_grid)
+```
+
+```{r}
+# view values in grid
+churn_nb_grid %>% count(smoothness)
+```
+
+```{r}
+set.seed(40)
+
+# create cross-validation folds
+churn_folds <- vfold_cv(churn_train, v = 5, strata = Churn)
+glimpse(churn_folds)
+
+# create validation set
+churn_val <- validation_split(churn_train, strata = Churn, prop = 0.80)
+glimpse(churn_val)
+```
+
+```{r}
+# create workflow and tune along grid
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+#ctrl_grid <- control_stack_grid()
+
+set.seed(40)
+
+churn_nb_wf <- workflow() %>%
+               add_recipe(churn_nb_rec) %>%
+               add_model(churn_nb_spec)
+
+churn_nb_res <- churn_nb_wf %>%
+                tune_grid(resamples = churn_val,
+                          grid = churn_nb_grid,
+                          control = control_grid(save_pred = TRUE,
+                                                 save_workflow = TRUE),
+                          #control = ctrl_grid,
+                          metrics = metric_set(roc_auc))
+```
+
+```{r}
+# collect cv results
+churn_nb_res %>% collect_predictions()
+saveRDS(churn_nb_res, './project/volume/data/processed/churn_nb_res.rds')
+
+churn_nb_res %>% collect_metrics()
+churn_nb_res %>% show_best("roc_auc")
+
+# select best hyperparameters
+churn_best_nb <- churn_nb_res %>%
+                 select_best("roc_auc")
+churn_best_nb
+```
+
+```{r}
+# visualize model cv performance
+churn_nb_auc <- churn_nb_res %>%
+                collect_predictions(parameters = churn_best_nb) %>%
+                roc_curve(Churn, .pred_No) %>%
+                mutate(model = "Naive Bayes")
+autoplot(churn_nb_auc)
+
+write_csv(churn_nb_auc, './project/volume/data/processed/churn_nb_auc.csv')
+```
+
+```{r}
+# finalize workflow
+churn_nb_final_wf <- churn_nb_wf %>%
+                     finalize_workflow(churn_best_nb)
+churn_nb_final_wf
+```
+
+```{r}
+# fit model on full training set and evaluate test performance
+churn_split <- readRDS('./project/volume/data/interim/churn_split.rds')
+
+set.seed(40)
+churn_nb_final_fit <- churn_nb_final_wf %>%
+                      last_fit(churn_split)
+
+churn_nb_final_fit %>% collect_metrics()
+churn_nb_final_fit %>% collect_predictions()
+```
+
+```{r}
+# visualize model test performance
+churn_nb_final_fit %>% collect_predictions() %>% roc_curve(Churn, .pred_No) %>% autoplot()
+```
+
+```{r}
+# extract final fitted workflow (recipe + model) for future use
+churn_final_nb_wf <- extract_workflow(churn_nb_final_fit)
+churn_final_nb_wf
+saveRDS(churn_final_nb_wf, './project/volume/models/churn_final_nb_wf.wf')
+```
+

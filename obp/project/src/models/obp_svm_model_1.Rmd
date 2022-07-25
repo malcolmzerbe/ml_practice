@@ -1,0 +1,119 @@
+---
+title: "Predict OBP Support Vector Machine Model (1)"
+date: "7/24/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(kernlab)
+library(doParallel)
+```
+
+```{r}
+# load in train and test
+obp_train <- read.csv('./project/volume/data/interim/obp_train_1.csv',
+                      stringsAsFactors = TRUE)
+obp_train <- as_tibble(obp_train)
+
+obp_test <- read.csv('./project/volume/data/interim/obp_test_1.csv', 
+                     stringsAsFactors = TRUE)
+obp_test <- as_tibble(obp_test)
+```
+
+```{r}
+# create model specification
+obp_svm_spec <- svm_rbf(cost = tune(),
+                        rbf_sigma = tune()) %>%
+                set_mode("regression") %>%
+                set_engine("kernlab")
+obp_svm_spec
+
+#args(svm_rbf)
+```
+
+```{r}
+# create model recipe to preprocess data
+obp_svm_rec <- recipe(FullSeason_OBP ~ ., data = obp_train) %>%
+               update_role(playerid, Name, Team, new_role = "ID") %>%
+               step_normalize(all_predictors())
+obp_svm_rec
+```
+
+```{r}
+# create regular grid of values for tuning
+obp_svm_grid <- grid_regular(cost(),
+                             rbf_sigma(),
+                             levels = 10)
+obp_svm_grid
+```
+
+```{r}
+# view values in grid
+obp_svm_grid %>% count(rbf_sigma) # change hyperparameter to view its tested values
+```
+
+```{r}
+set.seed(2008)
+
+# create cross-validation folds
+obp_folds <- vfold_cv(obp_train, v = 10)
+glimpse(obp_folds)
+```
+
+```{r}
+# create workflow and tune along grid
+all_cores <- parallel::detectCores()
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+set.seed(2008)
+
+obp_svm_wf <- workflow() %>%
+              add_model(obp_svm_spec) %>%
+              add_recipe(obp_svm_rec)
+
+obp_svm_res <- obp_svm_wf %>%
+               tune_grid(resamples = obp_folds,
+                         grid = obp_svm_grid,
+                         control = control_grid(save_pred = TRUE,
+                                                save_workflow = TRUE),
+                         metrics = metric_set(rmse, mae))
+
+stopCluster(cl)
+```
+
+```{r}
+# collect cv results
+saveRDS(obp_svm_res, './project/volume/models/obp_svm_res_1.rds')
+
+#obp_gbt_res %>% collect_predictions()
+obp_svm_res %>% collect_metrics()
+obp_svm_res %>% show_best("rmse")
+```
+
+```{r}
+# select best hyperparameters
+obp_best_svm <- obp_svm_res %>%
+               select_best("rmse")
+obp_best_svm
+```
+
+```{r}
+obp_svm_metric <- obp_svm_res %>% collect_metrics()
+obp_svm_metric[obp_svm_metric$.config == 'Preprocessor1_Model077',]
+```
+
+```{r}
+# record results for final model selection
+obp_svm_rmse <- 0.02879269
+saveRDS(obp_svm_rmse, './project/volume/data/processed/obp_svm_rmse_1.rds')
+obp_svm_mae <- 0.02296396
+saveRDS(obp_svm_mae, './project/volume/data/processed/obp_svm_mae_1.rds')
+```
+

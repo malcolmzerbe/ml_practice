@@ -1,0 +1,76 @@
+---
+title: "Predict OBP Feature Script (1)"
+date: "7/22/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(rsample)
+```
+
+```{r}
+# load in data
+obp_tbl <- read.csv('./project/volume/data/raw/batting.csv')
+obp_tbl <- as_tibble(obp_tbl)
+```
+
+```{r}
+# inspect data
+obp_tbl
+```
+
+```{r}
+# replace %
+obp_tbl <- mutate_if(obp_tbl,
+                     is.character,
+                     str_replace_all,
+                     pattern = "%",
+                     replacement = "")
+```
+
+```{r}
+# change column types
+obp_tbl <- obp_tbl %>% 
+           mutate(across(contains("."), as.double))
+```
+
+
+```{r}
+# final check of wrangled data
+glimpse(obp_tbl)
+write_csv(obp_tbl, './project/volume/data/interim/obp_tbl_1.csv')
+```
+
+```{r}
+# split into train and test
+set.seed(2008)
+obp_split <- initial_split(obp_tbl, prop = 0.80)
+saveRDS(obp_split, './project/volume/data/interim/obp_split_1.rds')
+
+obp_train <- training(obp_split)
+dim(obp_train)
+obp_test <- testing(obp_split)
+dim(obp_test)
+```
+
+```{r}
+# inspect train data
+obp_train
+```
+
+```{r}
+# inspect test data
+obp_test
+```
+
+```{r}
+# save train and test to interim
+write_csv(obp_train, './project/volume/data/interim/obp_train_1.csv')
+write_csv(obp_test, './project/volume/data/interim/obp_test_1.csv')
+```
+

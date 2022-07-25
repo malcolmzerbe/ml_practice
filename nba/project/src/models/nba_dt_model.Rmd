@@ -1,0 +1,195 @@
+---
+title: "NBA Decision Tree Model"
+output: html_notebook
+---
+
+```{r}
+# front-matter
+rm(list = ls()) #clear the workspace
+
+library(tidymodels)  # for the tune package, along with the rest of tidymodels
+
+# Helper packages
+library(rpart.plot)  # for visualizing a decision tree
+library(vip)         # for variable importance plots
+```
+
+```{r}
+nba <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/interim/nba.csv')
+
+nba <- as_tibble(nba)
+class(nba)
+
+nba <- nba %>%
+  mutate(TARGET_5Yrs = as.factor(TARGET_5Yrs))
+
+# Make Valid Column Names 
+colnames(nba) <- make.names(colnames(nba))
+
+nba
+```
+
+```{r}
+set.seed(123)
+nba_split <- initial_split(nba, strata = TARGET_5Yrs)
+nba_train <- training(nba_split)
+nba_test <- testing(nba_split)
+```
+
+```{r}
+# training set proportions by response
+nba_train %>% 
+  count(TARGET_5Yrs) %>% 
+  mutate(prop = n/sum(n))
+
+# test set proportions by response
+nba_test  %>% 
+  count(TARGET_5Yrs) %>% 
+  mutate(prop = n/sum(n))
+```
+
+```{r}
+tune_spec <- decision_tree(
+                cost_complexity = tune(),
+                tree_depth = tune(),
+                min_n = tune()
+              ) %>%
+             set_engine("rpart") %>%
+             set_mode("classification")
+
+tune_spec
+```
+
+```{r}
+tree_grid <- grid_regular(cost_complexity(),
+                          tree_depth(),
+                          min_n(),
+                          levels = 5)
+
+tree_grid
+```
+
+```{r}
+tree_grid %>%
+  count(cost_complexity)
+
+tree_grid %>%
+  count(tree_depth)
+
+tree_grid %>%
+  count(min_n)
+```
+
+```{r}
+set.seed(234)
+nba_folds <- vfold_cv(nba_train)
+nba_folds
+```
+
+```{r}
+set.seed(345)
+
+tree_wf <- workflow() %>%
+  add_model(tune_spec) %>%
+  add_formula(TARGET_5Yrs ~ .)
+
+tree_res <-
+  tree_wf %>%
+  tune_grid(
+      resamples = nba_folds,
+      grid = tree_grid,
+      control = control_grid(save_pred = TRUE),
+      metrics = metric_set(roc_auc)
+      )
+
+tree_res
+```
+
+```{r}
+tree_res %>%
+  collect_metrics
+```
+
+```{r}
+#tree_res %>%
+  #collect_metrics() %>%
+  #mutate(tree_depth = factor(tree_depth)) %>%
+  #ggplot(aes(cost_complexity, mean, color = tree_depth)) +
+  #geom_line(size = 1.5, alpha = 0.6) +
+  #geom_point(size = 2) +
+  #facet_wrap(~ .metric, scales = "free", nrow = 2) +
+  #scale_x_log10(labels = scales::label_number()) +
+  #scale_color_viridis_d(option = "plasma", begin = .9, end = 0)
+```
+
+```{r}
+tree_res %>%
+  show_best("roc_auc")
+```
+
+```{r}
+best_tree <- tree_res %>%
+  select_best("roc_auc")
+
+best_tree
+```
+```{r}
+dt_auc <-
+  tree_res %>%
+  collect_predictions(parameters = best_tree) %>%
+  roc_curve(TARGET_5Yrs, .pred_0) %>%
+  mutate(model = "Decision Tree")
+
+autoplot(dt_auc)
+
+library(data.table)
+fwrite(dt_auc,'/Users/malcolmzerbe/practice_r/nba/project/volume/data/processed/dt_auc.csv')
+```
+
+```{r}
+dt_final_wf <-
+  tree_wf %>%
+  finalize_workflow(best_tree)
+
+dt_final_wf
+```
+
+```{r}
+dt_final_fit <-
+  dt_final_wf %>%
+  last_fit(diabetes_split)
+
+dt_final_fit %>%
+  collect_metrics
+
+dt_final_fit %>% collect_predictions()
+```
+
+```{r}
+dt_final_fit %>%
+  collect_predictions() %>%
+  roc_curve(diabetes, .pred_1) %>%
+  autoplot()
+```
+
+```{r}
+final_tree <- extract_workflow(dt_final_fit)
+final_tree
+```
+
+```{r}
+final_tree %>%
+  extract_fit_engine() %>%
+  rpart.plot(roundint = FALSE)
+```
+
+```{r}
+final_tree %>%
+  extract_fit_parsnip() %>%
+  vip()
+```
+
+```{r}
+args(decision_tree)
+```
+

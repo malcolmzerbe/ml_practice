@@ -1,0 +1,175 @@
+---
+title: "NBA Logistic Regression Model"
+output: html_notebook
+---
+
+```{r}
+# front-matter
+rm(list = ls()) #clear the workspace
+
+library(tidymodels)  # for the tune package, along with the rest of tidymodels
+
+# Helper packages
+library(rpart.plot)  # for visualizing a decision tree
+library(vip)         # for variable importance plots
+```
+
+```{r}
+nba <- fread('/Users/malcolmzerbe/practice_r/nba/project/volume/data/interim/nba.csv')
+
+nba <- as_tibble(nba)
+class(nba)
+
+nba <- nba %>%
+  mutate(TARGET_5Yrs = as.factor(TARGET_5Yrs))
+
+# Make Valid Column Names 
+colnames(nba) <- make.names(colnames(nba))
+
+nba
+```
+
+```{r}
+set.seed(123)
+nba_split <- initial_split(nba, strata = TARGET_5Yrs)
+nba_train <- training(nba_split)
+nba_test <- testing(nba_split)
+```
+
+```{r}
+# training set proportions by response
+nba_train %>% 
+  count(TARGET_5Yrs) %>% 
+  mutate(prop = n/sum(n))
+
+# test set proportions by response
+nba_test  %>% 
+  count(TARGET_5Yrs) %>% 
+  mutate(prop = n/sum(n))
+```
+
+```{r}
+lr_mod <-
+  logistic_reg(penalty = tune(), mixture = tune()) %>%
+  set_engine("glmnet")
+
+lr_mod
+```
+
+```{r}
+lr_grid <- grid_regular(penalty(),
+                        mixture(),
+                        levels = 15)
+
+lr_grid
+```
+
+```{r}
+lr_grid %>%
+  count(penalty)
+
+lr_grid %>%
+  count(mixture)
+```
+
+```{r}
+set.seed(234)
+nba_folds <- vfold_cv(nba_train)
+nba_folds
+```
+
+```{r}
+lr_workflow <-
+  workflow() %>%
+  add_model(lr_mod) %>%
+  add_formula(TARGET_5Yrs ~ .)
+
+lr_res <-
+  lr_workflow %>%
+  tune_grid(
+    resamples = nba_folds,
+    grid = lr_grid,
+    control = control_grid(save_pred = TRUE),
+    metrics = metric_set(roc_auc)
+    )
+
+lr_res
+```
+
+```{r}
+lr_res %>%
+  collect_metrics
+```
+
+```{r}
+lr_res %>%
+  show_best("roc_auc")
+```
+
+```{r}
+best_lr <- lr_res %>%
+  select_best("roc_auc")
+
+best_lr
+```
+
+```{r}
+lr_auc <-
+  lr_res %>%
+  collect_predictions(parameters = best_lr) %>%
+  roc_curve(TARGET_5Yrs, .pred_0) %>%
+  mutate(model = "Logistic Regression")
+
+autoplot(lr_auc)
+
+library(data.table)
+fwrite(lr_auc,'/Users/malcolmzerbe/practice_r/nba/project/volume/data/processed/lr_auc.csv')
+```
+
+```{r}
+lr_final_wf <-
+  lr_workflow %>%
+  finalize_workflow(best_lr)
+
+lr_final_wf
+```
+
+```{r}
+lr_final_fit <-
+  lr_final_wf %>%
+  last_fit(diabetes_split)
+
+lr_final_fit %>%
+  collect_metrics
+
+lr_final_fit %>% collect_predictions()
+```
+
+```{r}
+lr_final_fit %>%
+  collect_predictions() %>%
+  roc_curve(diabetes, .pred_neg) %>%
+  autoplot()
+```
+
+```{r}
+final_lr <- extract_workflow(lr_final_fit)
+final_lr
+```
+
+```{r}
+#final_boost %>%
+  #extract_fit_engine() %>%
+  #rpart.plot(roundint = FALSE)
+```
+
+```{r}
+final_lr %>%
+  extract_fit_parsnip() %>%
+  vip()
+```
+
+```{r}
+args(logistic_reg)
+```
+

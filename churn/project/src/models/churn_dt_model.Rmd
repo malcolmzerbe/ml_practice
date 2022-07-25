@@ -1,0 +1,161 @@
+---
+title: "Customer Churn Decision Tree Model"
+output: html_notebook
+---
+
+```{r, include = F, echo = F, warning = F}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(tidymodels)
+library(rpart)
+library(stacks)
+library(vip)
+library(doParallel)
+```
+
+```{r}
+# load in train and test
+churn_train_path <- './project/volume/data/interim/churn_train.csv'
+churn_test_path <- './project/volume/data/interim/churn_test.csv'
+  
+churn_train <- read.csv(churn_train_path, stringsAsFactors = TRUE)
+churn_test <- read.csv(churn_test_path, stringsAsFactors = TRUE)
+```
+
+```{r}
+# create model specification
+churn_dt_spec <- decision_tree(cost_complexity = tune(),
+                               tree_depth = tune(),
+                               min_n = tune()) %>%
+                 set_mode("classification") %>%
+                 set_engine("rpart")
+churn_dt_spec
+
+#args(decision_tree)
+```
+
+```{r}
+# create model recipe to preprocess data
+churn_dt_rec <- recipe(Churn ~ ., data = churn_train) %>%
+                update_role(customerID, new_role = "ID") %>%
+                step_dummy(all_nominal_predictors()) %>%
+                step_zv(all_predictors()) %>%
+                step_normalize(all_predictors())
+churn_dt_rec
+```
+
+```{r}
+# create regular grid of values for tuning
+churn_dt_grid <- grid_regular(cost_complexity(),
+                              tree_depth(),
+                              min_n(),
+                              levels = 5)
+churn_dt_grid
+dim(churn_dt_grid)
+```
+
+
+```{r}
+# view values in grid
+churn_dt_grid %>% count(cost_complexity)
+```
+
+```{r}
+set.seed(40)
+
+# create cross-validation folds
+churn_folds <- vfold_cv(churn_train, v = 5, strata = Churn)
+glimpse(churn_folds)
+
+# create validation set
+churn_val <- validation_split(churn_train, strata = Churn, prop = 0.80)
+glimpse(churn_val)
+```
+
+```{r}
+# create workflow and tune along grid
+all_cores <- parallel::detectCores(logical = FALSE)
+cl <- makePSOCKcluster(all_cores)
+registerDoParallel(cl)
+
+#ctrl_grid <- control_stack_grid()
+
+set.seed(40)
+
+churn_dt_wf <- workflow() %>%
+               add_recipe(churn_dt_rec) %>%
+               add_model(churn_dt_spec)
+
+churn_dt_res <- churn_dt_wf %>%
+                tune_grid(resamples = churn_val,
+                          grid = churn_dt_grid,
+                          control = control_grid(save_pred = TRUE,
+                                                 save_workflow = TRUE),
+                          #control = ctrl_grid,
+                          metrics = metric_set(roc_auc))
+```
+
+```{r}
+# collect cv results
+churn_dt_res %>% collect_predictions()
+saveRDS(churn_dt_res, './project/volume/data/processed/churn_dt_res.rds')
+
+churn_dt_res %>% collect_metrics()
+churn_dt_res %>% show_best("roc_auc")
+
+# select best hyperparameters
+churn_best_dt <- churn_dt_res %>%
+                 select_best("roc_auc")
+churn_best_dt
+```
+
+```{r}
+# visualize model cv performance
+churn_dt_auc <- churn_dt_res %>%
+                collect_predictions(parameters = churn_best_dt) %>%
+                roc_curve(Churn, .pred_No) %>%
+                mutate(model = "Decision Tree")
+autoplot(churn_dt_auc)
+
+write_csv(churn_dt_auc, './project/volume/data/processed/churn_dt_auc.csv')
+```
+
+```{r}
+# finalize workflow
+churn_dt_final_wf <- churn_dt_wf %>%
+                     finalize_workflow(churn_best_dt)
+churn_dt_final_wf
+```
+
+```{r}
+# fit model on full training set and evaluate test performance
+churn_split <- readRDS('./project/volume/data/interim/churn_split.rds')
+
+set.seed(40)
+churn_dt_final_fit <- churn_dt_final_wf %>%
+                      last_fit(churn_split)
+
+churn_dt_final_fit %>% collect_metrics()
+churn_dt_final_fit %>% collect_predictions()
+```
+
+```{r}
+# visualize model test performance
+churn_dt_final_fit %>% collect_predictions() %>% roc_curve(Churn, .pred_No) %>% autoplot()
+```
+
+```{r}
+# extract final fitted workflow (recipe + model) for future use
+churn_final_dt_wf <- extract_workflow(churn_dt_final_fit)
+churn_final_dt_wf
+saveRDS(churn_final_dt_wf, './project/volume/models/churn_final_dt_wf.wf')
+```
+
+```{r}
+# inspect variable importance
+churn_final_dt_wf %>% extract_fit_parsnip() %>% vip(num_features = 20)
+```
+
