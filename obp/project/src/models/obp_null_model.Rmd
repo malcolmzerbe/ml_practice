@@ -15,10 +15,10 @@ library(tidymodels)
 
 ```{r}
 # load in train and test
-obp_train <- read.csv('./project/volume/data/interim/obp_train.csv', stringsAsFactors = TRUE)
+obp_train <- read.csv('./project/volume/data/interim/obp_train_1.csv', stringsAsFactors = TRUE)
 obp_train <- as_tibble(obp_train)
 
-obp_test <- read.csv('./project/volume/data/interim/obp_test.csv', stringsAsFactors = TRUE)
+obp_test <- read.csv('./project/volume/data/interim/obp_test_1.csv', stringsAsFactors = TRUE)
 obp_test <- as_tibble(obp_test)
 ```
 

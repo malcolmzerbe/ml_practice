@@ -77,8 +77,9 @@ obp_tbl <- obp_tbl %>%
 # inspect data
 obp_tbl
 ```
+
 ```{r}
-# replace %
+# get rid of %
 obp_tbl <- mutate_if(obp_tbl,
                      is.character,
                      str_replace_all,
