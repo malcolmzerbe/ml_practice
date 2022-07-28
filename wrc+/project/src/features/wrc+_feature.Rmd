@@ -1,0 +1,143 @@
+---
+title: "Predict wRC+ Feature Script"
+date: "7/24/2022"
+output: html_document
+---
+
+```{r, include=FALSE}
+# clear environment
+rm(list = ls())
+
+# load packages
+library(tidyverse)
+library(rsample)
+```
+
+```{r}
+# load in data
+batting2019_tbl <- read.csv('./project/volume/data/raw/batting2019.csv')
+batting2019_tbl <- as_tibble(batting2019_tbl)
+
+batting2018_tbl <- read.csv('./project/volume/data/raw/batting2018.csv')
+batting2018_tbl <- as_tibble(batting2018_tbl)
+
+batting2017_tbl <- read.csv('./project/volume/data/raw/batting2017.csv')
+batting2017_tbl <- as_tibble(batting2017_tbl)
+
+batting2016_tbl <- read.csv('./project/volume/data/raw/batting2016.csv')
+batting2016_tbl <- as_tibble(batting2016_tbl)
+```
+
+```{r}
+# join 2018 features
+wrc_tbl <- left_join(batting2019_tbl, batting2018_tbl, by = "playerid")
+#wrc_tbl <- wrc_tbl %>%
+           #relocate(FullSeason_OBP, .after = HardHit._2018)
+```
+
+```{r}
+colnames(wrc_tbl) = gsub(".x", "_2019", colnames(wrc_tbl))
+colnames(wrc_tbl) = gsub(".y", "_2018", colnames(wrc_tbl))
+glimpse(wrc_tbl)
+```
+
+
+```{r}
+# rename columns
+wrc_tbl <- wrc_tbl %>%
+           select(-Name.y) %>%
+           rename(Name = Name.x) %>%
+           rename(MarApr_Team = Team.x) %>%
+           rename(Team_2018 = Team.y) %>%
+           rename(PA_2018 = PA) %>%
+           rename(AB_2018 = AB) %>%
+           rename(H_2018 = H) %>%
+           rename(HR_2018 = HR) %>%
+           rename(R_2018 = R) %>%
+           rename(RBI_2018 = RBI) %>%
+           rename(SB_2018 = SB) %>%
+           rename(BB._2018 = BB.) %>%
+           rename(K._2018 = K.) %>%
+           rename(ISO_2018 = ISO) %>%
+           rename(BABIP_2018 = BABIP) %>%
+           rename(AVG_2018 = AVG) %>%
+           rename(OBP_2018 = OBP) %>%
+           rename(SLG_2018 = SLG) %>%
+           rename(LD._2018 = LD.) %>%
+           rename(GB._2018 = GB.) %>%
+           rename(FB._2018 = FB.) %>%
+           rename(IFFB._2018 = IFFB.) %>%
+           rename(HR.FB_2018 = HR.FB) %>%
+           rename(O.Swing._2018 = O.Swing.) %>%
+           rename(Z.Swing._2018 = Z.Swing.) %>%
+           rename(Swing._2018 = Swing.) %>%
+           rename(O.Contact._2018 = O.Contact.) %>%
+           rename(Z.Contact._2018 = Z.Contact.) %>%
+           rename(Contact._2018 = Contact.) %>%
+           rename(wOBA_2018 = wOBA) %>%
+           rename(wRC._2018 = wRC.) %>%
+           rename(xBA_2018 = xBA) %>%
+           rename(xSLG_2018 = xSLG) %>%
+           rename(xwOBA_2018 = xwOBA) %>%
+           rename(EV_2018 = EV) %>%
+           rename(LA_2018 = LA) %>%
+           rename(Barrel._2018 = Barrel.) %>%
+           rename(maxEV_2018 = maxEV) %>%
+           rename(HardHit._2018 = HardHit.) %>%
+           relocate(FullSeason_OBP, .after = HardHit._2018)
+```
+
+```{r}
+# inspect data
+obp_tbl
+```
+
+```{r}
+# get rid of %
+obp_tbl <- mutate_if(obp_tbl,
+                     is.character,
+                     str_replace_all,
+                     pattern = "%",
+                     replacement = "")
+```
+
+```{r}
+# change column types
+obp_tbl <- obp_tbl %>% 
+           mutate(across(contains("."), as.double))
+```
+
+```{r}
+# final check of wrangled data
+glimpse(obp_tbl)
+write_csv(obp_tbl, './project/volume/data/interim/obp_tbl_2.csv')
+```
+
+```{r}
+# split into train and test
+set.seed(2008)
+obp_split <- initial_split(obp_tbl, prop = 0.80)
+saveRDS(obp_split, './project/volume/data/interim/obp_split_2.rds')
+
+obp_train <- training(obp_split)
+dim(obp_train)
+obp_test <- testing(obp_split)
+dim(obp_test)
+```
+
+```{r}
+# inspect train data
+obp_train
+```
+
+```{r}
+# inspect test data
+obp_test
+```
+
+```{r}
+# save train and test to interim
+write_csv(obp_train, './project/volume/data/interim/obp_train_2.csv')
+write_csv(obp_test, './project/volume/data/interim/obp_test_2.csv')
+```
+
